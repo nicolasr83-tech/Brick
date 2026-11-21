@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lego Finder – pièces d’un set dans le vrac</title>
+<style>
+:root{--bg:#f6f6f4;--card:#fff;--tx:#1b1b1b;--mut:#666;--bd:#ddd;--ac:#d01012;--ok:#1a9a3c}
+@media (prefers-color-scheme:dark){:root{--bg:#161616;--card:#232323;--tx:#eee;--mut:#9a9a9a;--bd:#3a3a3a}}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--tx);padding:12px;max-width:900px;margin-inline:auto}
+h1{font-size:1.3rem;margin:.2rem 0 .8rem}
+section,details{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px;margin-bottom:12px}
+summary{cursor:pointer;font-weight:600}
+label{display:block;font-size:.85rem;color:var(--mut);margin:.5rem 0 .15rem}
+input[type=text],input[type=password],select{width:100%;padding:9px;border:1px solid var(--bd);border-radius:7px;background:var(--bg);color:var(--tx);font-size:1rem}
+button{padding:9px 14px;border:0;border-radius:7px;background:var(--ac);color:#fff;font-size:1rem;cursor:pointer}
+button.sec{background:var(--bd);color:var(--tx)}
+button:disabled{opacity:.5}
+.row{display:flex;gap:8px;align-items:end;flex-wrap:wrap}
+.row>*{flex:1}.row>button{flex:0 0 auto}
+.status{font-size:.9rem;color:var(--mut);margin-top:.5rem;white-space:pre-wrap}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:.5rem 0}
+.chip{display:flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid var(--bd);border-radius:20px;cursor:pointer;font-size:.85rem;background:var(--bg)}
+.chip.on{border-color:var(--ac);outline:2px solid var(--ac)}
+.sw{width:14px;height:14px;border-radius:50%;border:1px solid #888}
+.items{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:8px}
+.it{border:1px solid var(--bd);border-radius:8px;padding:6px;font-size:.78rem;background:var(--bg)}
+.it img{width:100%;height:70px;object-fit:contain;background:#fff;border-radius:5px}
+.it b{display:block}
+.it .cnt{margin-top:3px;font-weight:600}
+.it.done{border-color:var(--ok)}
+canvas{width:100%;height:auto;border-radius:8px;display:block;touch-action:manipulation}
+.dets{display:flex;flex-direction:column;gap:5px;margin-top:8px}
+.det{display:flex;gap:8px;align-items:center;font-size:.85rem;padding:5px 8px;border:1px solid var(--bd);border-radius:7px}
+.det .n{font-weight:700;min-width:1.8em}
+.det.ok{border-color:var(--ok)}.det.no{opacity:.45;text-decoration:line-through}
+.det span.t{flex:1}
+.det button{padding:4px 9px;font-size:.85rem}
+small{color:var(--mut)}
+</style>
+</head>
+<body>
+<h1>🧱 Lego Finder</h1>
+
+<details id="settings">
+<summary>1. Réglages (clés d’API)</summary>
+<label>Clé API Rebrickable (gratuite sur rebrickable.com)</label>
+<input type="password" id="rbKey" autocomplete="off">
+<label>Clé API Anthropic (optionnelle : seulement pour le mode Claude, payant)</label>
+<input type="password" id="anKey" autocomplete="off">
+<label>Modèle Anthropic</label>
+<input type="text" id="model" value="claude-sonnet-4-6">
+<p><small>Les clés restent dans le navigateur de ce téléphone (localStorage) et ne sont envoyées qu’à Rebrickable et Anthropic. Ne les écrivez jamais dans le fichier avant de le mettre sur GitHub.</small></p>
+<button id="saveKeys" class="sec">Enregistrer</button>
+</details>
+
+<section>
+<strong>2. Set</strong>
+<div class="row">
+  <div><label>Numéro du set</label><input type="text" id="setnum" inputmode="numeric" placeholder="60367"></div>
+  <button id="loadSet">Charger</button>
+</div>
+<div class="status" id="setStatus"></div>
+</section>
+
+<section id="invSec" hidden>
+<strong>3. Pièces à chercher</strong> <small>(choisissez une couleur)</small>
+<div class="chips" id="chips"></div>
+<div class="items" id="items"></div>
+</section>
+
+<section id="photoSec" hidden>
+<strong>4. Photo du vrac</strong>
+<p><small>Une couleur à la fois, pièces étalées en une couche, photo bien à la verticale sur fond uni.</small></p>
+<input type="file" id="file" accept="image/*" capture="environment">
+<label>Méthode</label>
+<select id="mode">
+  <option value="bk">Gratuit : détection par couleur + Brickognize</option>
+  <option value="cl">Claude (clé Anthropic, payant)</option>
+</select>
+<div id="bkOpts">
+  <label>Tolérance de couleur : <span id="tolv">30</span></label>
+  <input type="range" id="tol" min="8" max="70" value="30" style="width:100%">
+  <button id="calib" class="sec" style="margin-top:6px" disabled>🎯 Calibrer la couleur (touchez une pièce sur la photo)</button>
+  <p><small>Sans calibrage, la couleur de l’inventaire est utilisée, mais la lumière de la photo la décale souvent. Calibrer est recommandé.</small></p>
+</div>
+<div id="clOpts" hidden>
+  <label style="display:flex;gap:6px;align-items:center;margin:0"><input type="checkbox" id="tile" checked> Découper en 4 zones (plus précis, 4 appels)</label>
+</div>
+<div class="row" style="margin-top:8px"><button id="go" disabled>Analyser</button></div>
+<div class="status" id="photoStatus"></div>
+<canvas id="cv" hidden></canvas>
+<p id="hint" hidden><small>Touchez un cadre sur la photo (ou les boutons) : jaune = à vérifier, vert = confirmé, masqué = rejeté.</small></p>
+<div class="dets" id="dets"></div>
+</section>
+
+<script>
+const $=id=>document.getElementById(id);
+const S={setNum:null,items:[],color:null,img:null,dets:[]};
+
+/* ---------- réglages ---------- */
+function ls(k,v){try{if(v===undefined)return localStorage.getItem(k);localStorage.setItem(k,v)}catch(e){return null}}
+$('rbKey').value=ls('lf_rb')||'';$('anKey').value=ls('lf_an')||'';
+if(ls('lf_model'))$('model').value=ls('lf_model');
+if(!ls('lf_rb')||!ls('lf_an'))$('settings').open=true;
+$('saveKeys').onclick=()=>{ls('lf_rb',$('rbKey').value.trim());ls('lf_an',$('anKey').value.trim());ls('lf_model',$('model').value.trim());$('settings').open=false};
+
+/* ---------- inventaire Rebrickable ---------- */
+async function rb(url){
+  const r=await fetch(url,{headers:{Authorization:'key '+ls('lf_rb')}});
+  if(!r.ok)throw new Error('Rebrickable '+r.status+(r.status===401?' (clé invalide)':r.status===404?' (set introuvable)':''));
+  return r.json();
+}
+$('loadSet').onclick=async()=>{
+  const key=ls('lf_rb');
+  if(!key){$('settings').open=true;$('setStatus').textContent='Ajoutez d’abord la clé Rebrickable.';return}
+  let num=$('setnum').value.trim();if(!num)return;
+  if(!/-\d+$/.test(num))num+='-1';
+  $('setStatus').textContent='Chargement…';
+  try{
+    const info=await rb(`https://rebrickable.com/api/v3/lego/sets/${num}/`);
+    let url=`https://rebrickable.com/api/v3/lego/sets/${num}/parts/?page_size=1000`,all=[];
+    while(url){const d=await rb(url);all=all.concat(d.results);url=d.next}
+    S.items=all.filter(x=>!x.is_spare).map((x,i)=>({idx:i+1,part_num:x.part.part_num,name:x.part.name,img:x.part.part_img_url,
+      color_id:x.color.id,color_name:x.color.name,rgb:x.color.rgb,qty:x.quantity,element_id:x.element_id||''}));
+    S.setNum=num;S.color=null;S.dets=[];
+    const total=S.items.reduce((a,b)=>a+b.qty,0);
+    $('setStatus').textContent=`${info.name} — ${S.items.length} références, ${total} pièces.`;
+    renderChips();$('invSec').hidden=false;$('photoSec').hidden=false;renderItems();
+  }catch(e){$('setStatus').textContent='Erreur : '+e.message+'\n(Si c’est « Failed to fetch », le navigateur bloque l’appel : vérifiez la clé et la connexion.)'}
+};
+function colorsList(){
+  const m=new Map();
+  S.items.forEach(i=>{const c=m.get(i.color_id)||{id:i.color_id,name:i.color_name,rgb:i.rgb,n:0,q:0};c.n++;c.q+=i.qty;m.set(i.color_id,c)});
+  return [...m.values()].sort((a,b)=>b.q-a.q);
+}
+function renderChips(){
+  const box=$('chips');box.innerHTML='';
+  colorsList().forEach(c=>{
+    const d=document.createElement('div');d.className='chip'+(S.color===c.id?' on':'');
+    d.innerHTML=`<span class="sw" style="background:#${c.rgb}"></span>${c.name} <small>${c.q}</small>`;
+    d.onclick=()=>{S.color=S.color===c.id?null:c.id;renderChips();renderItems()};
+    box.appendChild(d);
+  });
+}
+function visibleItems(){return S.color===null?S.items:S.items.filter(i=>i.color_id===S.color)}
+function counts(){
+  const c={};S.dets.forEach(d=>{if(d.state==='no'||!d.item)return;c[d.item]=c[d.item]||{ok:0,pend:0};d.state==='ok'?c[d.item].ok++:c[d.item].pend++});return c;
+}
+function renderItems(){
+  const box=$('items');box.innerHTML='';const c=counts();
+  visibleItems().slice(0,300).forEach(i=>{
+    const k=c[i.idx]||{ok:0,pend:0};
+    const d=document.createElement('div');d.className='it'+(k.ok>=i.qty?' done':'');
+    d.innerHTML=`<img loading="lazy" src="${i.img||''}" alt=""><b>#${i.idx} ${esc(i.name)}</b>${i.part_num}${i.element_id?' · élément '+i.element_id:''}<div class="cnt">${k.ok} ✓ ${k.pend?'+ '+k.pend+' ? ':''}/ ${i.qty}</div>`;
+    box.appendChild(d);
+  });
+}
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* ---------- photo ---------- */
+$('file').onchange=async e=>{
+  const f=e.target.files[0];if(!f)return;
+  const bmp=await createImageBitmap(f);
+  const sc=Math.min(1,2000/Math.max(bmp.width,bmp.height));
+  const c=document.createElement('canvas');c.width=Math.round(bmp.width*sc);c.height=Math.round(bmp.height*sc);
+  c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);
+  S.img=c;S.dets=[];S.sample=null;$('go').disabled=false;$('calib').disabled=false;draw();$('cv').hidden=false;renderDets();renderItems();
+  $('photoStatus').textContent=`Photo chargée (${c.width}×${c.height}).`;
+};
+function crop(x,y,w,h,maxSide=1568){
+  const sc=Math.min(1,maxSide/Math.max(w,h));
+  const c=document.createElement('canvas');c.width=Math.round(w*sc);c.height=Math.round(h*sc);
+  c.getContext('2d').drawImage(S.img,x,y,w,h,0,0,c.width,c.height);
+  return {b64:c.toDataURL('image/jpeg',0.85).split(',')[1],w:c.width,h:c.height,sx:w/c.width,sy:h/c.height};
+}
+async function askClaude(tile,list){
+  const prompt=`Voici une photo de pièces LEGO en vrac (${tile.w}×${tile.h} pixels). Trouve toutes les pièces qui correspondent à la liste ci-dessous (couleur ET forme doivent correspondre). Ignore les autres pièces. En cas de doute sur la forme ou la teinte, baisse la confiance plutôt que d’inventer ; ne renvoie rien pour les pièces absentes.
+
+Liste (#numéro | nom | référence | couleur | quantité attendue) :
+${list.map(i=>`#${i.idx} | ${i.name} | ${i.part_num} | ${i.color_name} | ${i.qty}`).join('\n')}
+
+Réponds UNIQUEMENT par du JSON, sans texte autour :
+{"detections":[{"item":<numéro de la liste>,"box":[x0,y0,x1,y1],"confidence":<0 à 1>}]}
+Les coordonnées de box sont en pixels de l’image fournie (origine en haut à gauche), le cadre doit entourer une seule pièce.`;
+  const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{
+    'content-type':'application/json','x-api-key':ls('lf_an'),'anthropic-version':'2023-06-01',
+    'anthropic-dangerous-direct-browser-access':'true'},
+    body:JSON.stringify({model:ls('lf_model')||$('model').value,max_tokens:4000,messages:[{role:'user',content:[
+      {type:'image',source:{type:'base64',media_type:'image/jpeg',data:tile.b64}},{type:'text',text:prompt}]}]})});
+  if(!r.ok){let m='';try{m=(await r.json()).error.message}catch(e){}throw new Error('Anthropic '+r.status+' '+m)}
+  const d=await r.json();
+  const txt=d.content.filter(c=>c.type==='text').map(c=>c.text).join('');
+  const a=txt.indexOf('{'),b=txt.lastIndexOf('}');
+  return JSON.parse(txt.slice(a,b+1)).detections||[];
+}
+function iou(a,b){
+  const x0=Math.max(a[0],b[0]),y0=Math.max(a[1],b[1]),x1=Math.min(a[2],b[2]),y1=Math.min(a[3],b[3]);
+  const i=Math.max(0,x1-x0)*Math.max(0,y1-y0);
+  const u=(a[2]-a[0])*(a[3]-a[1])+(b[2]-b[0])*(b[3]-b[1])-i;return u?i/u:0;
+}
+$('go').onclick=async()=>{
+  if($('mode').value==='bk')return runBK();
+  if(!ls('lf_an')){$('settings').open=true;$('photoStatus').textContent='Ajoutez la clé Anthropic.';return}
+  const list=visibleItems().slice(0,150);
+  if(!list.length)return;
+  $('go').disabled=true;$('photoStatus').textContent='Analyse en cours…';
+  const W=S.img.width,H=S.img.height;let tiles;
+  if($('tile').checked){
+    const ov=0.12,tw=W/2*(1+ov),th=H/2*(1+ov);
+    tiles=[[0,0],[W-tw,0],[0,H-th],[W-tw,H-th]].map(([x,y])=>[Math.round(x),Math.round(y),Math.round(tw),Math.round(th)]);
+  }else tiles=[[0,0,W,H]];
+  try{
+    const res=await Promise.all(tiles.map(async([x,y,w,h])=>{
+      const t=crop(x,y,w,h);const ds=await askClaude(t,list);
+      return ds.filter(d=>Array.isArray(d.box)&&d.box.length===4&&list.some(i=>i.idx===d.item)).map(d=>({
+        item:d.item,conf:+d.confidence||0.5,
+        box:[x+d.box[0]*t.sx,y+d.box[1]*t.sy,x+d.box[2]*t.sx,y+d.box[3]*t.sy].map((v,k)=>Math.max(0,Math.min(k%2?H:W,v)))}));
+    }));
+    let all=res.flat().sort((a,b)=>b.conf-a.conf),keep=[];
+    for(const d of all){if(!keep.some(k=>k.item===d.item&&iou(k.box,d.box)>0.3))keep.push(d)}
+    S.dets=keep.map((d,i)=>({...d,n:i+1,state:'pend'}));
+    $('photoStatus').textContent=`${S.dets.length} candidat(s). Les cadres sont approximatifs : vérifiez-les.`;
+    $('hint').hidden=false;
+  }catch(e){$('photoStatus').textContent='Erreur : '+e.message}
+  $('go').disabled=false;draw();renderDets();renderItems();
+};
+
+/* ---------- mode gratuit : couleur + Brickognize ---------- */
+$('mode').onchange=()=>{const bk=$('mode').value==='bk';$('bkOpts').hidden=!bk;$('clOpts').hidden=bk};
+$('tol').oninput=()=>$('tolv').textContent=$('tol').value;
+S.calibrating=false;S.sample=null;
+$('calib').onclick=()=>{S.calibrating=true;$('photoStatus').textContent='Touchez une pièce de la couleur cherchée sur la photo.'};
+function lab(r,g,b){
+  const f=v=>{v/=255;return v>0.04045?Math.pow((v+0.055)/1.055,2.4):v/12.92};
+  r=f(r);g=f(g);b=f(b);
+  let x=(r*0.4124+g*0.3576+b*0.1805)/0.95047,y=r*0.2126+g*0.7152+b*0.0722,z=(r*0.0193+g*0.1192+b*0.9505)/1.08883;
+  const h=t=>t>0.008856?Math.cbrt(t):7.787*t+16/116;
+  x=h(x);y=h(y);z=h(z);return[116*y-16,500*(x-y),200*(y-z)];
+}
+function sampleAt(x,y){
+  const g=S.img.getContext('2d'),d=g.getImageData(Math.max(0,x-3),Math.max(0,y-3),7,7).data;let r=0,gg=0,b=0,n=d.length/4;
+  for(let i=0;i<d.length;i+=4){r+=d[i];gg+=d[i+1];b+=d[i+2]}
+  return[r/n,gg/n,b/n];
+}
+function findBlobs(target,tol){
+  const W0=S.img.width,H0=S.img.height,sc=Math.min(1,700/Math.max(W0,H0)),W=Math.round(W0*sc),H=Math.round(H0*sc);
+  const c=document.createElement('canvas');c.width=W;c.height=H;const g=c.getContext('2d');g.drawImage(S.img,0,0,W,H);
+  const px=g.getImageData(0,0,W,H).data,T=lab(...target),mask=new Uint8Array(W*H);
+  for(let i=0;i<W*H;i++){
+    const L=lab(px[i*4],px[i*4+1],px[i*4+2]);
+    const dc=Math.hypot(L[1]-T[1],L[2]-T[2]),dl=Math.abs(L[0]-T[0]);
+    if(dc<tol&&dl<tol*1.8)mask[i]=1;
+  }
+  const lbl=new Int32Array(W*H),blobs=[];let id=0;
+  for(let i=0;i<W*H;i++){
+    if(!mask[i]||lbl[i])continue;id++;
+    let st=[i],x0=W,y0=H,x1=0,y1=0,a=0;lbl[i]=id;
+    while(st.length){
+      const p=st.pop(),x=p%W,y=(p-x)/W;a++;
+      if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;
+      for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+        const nx=x+dx,ny=y+dy;if(nx<0||ny<0||nx>=W||ny>=H)continue;
+        const q=ny*W+nx;if(mask[q]&&!lbl[q]){lbl[q]=id;st.push(q)}
+      }
+    }
+    if(a>=Math.max(40,W*H*0.00012))blobs.push({a,box:[x0/sc,y0/sc,(x1+1)/sc,(y1+1)/sc]});
+  }
+  return blobs.sort((a,b)=>b.a-a.a).slice(0,60);
+}
+function baseId(s){return String(s).toLowerCase().replace(/^(\d+).*$/,'$1')}
+async function brickognize(box){
+  const w=box[2]-box[0],h=box[3]-box[1],pad=0.12*Math.max(w,h);
+  const x=Math.max(0,box[0]-pad),y=Math.max(0,box[1]-pad),X=Math.min(S.img.width,box[2]+pad),Y=Math.min(S.img.height,box[3]+pad);
+  const c=document.createElement('canvas');c.width=X-x;c.height=Y-y;c.getContext('2d').drawImage(S.img,x,y,X-x,Y-y,0,0,c.width,c.height);
+  const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',0.9));
+  const fd=new FormData();fd.append('query_image',blob,'piece.jpg');
+  const r=await fetch('https://api.brickognize.com/predict/parts/',{method:'POST',body:fd,headers:{accept:'application/json'}});
+  if(!r.ok)throw new Error('Brickognize '+r.status);
+  const d=await r.json();return d.items||[];
+}
+async function runBK(){
+  if(S.color===null){$('photoStatus').textContent='Choisissez d’abord une couleur dans la liste (étape 3).';return}
+  const tgt=S.sample||(()=>{const it=S.items.find(i=>i.color_id===S.color),h=it.rgb;return[parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)]})();
+  const cand=S.items.filter(i=>i.color_id===S.color);
+  $('go').disabled=true;$('photoStatus').textContent='Détection des pièces de cette couleur…';
+  await new Promise(r=>setTimeout(r,30));
+  const blobs=findBlobs(tgt,+$('tol').value);
+  if(!blobs.length){$('photoStatus').textContent='Aucune zone de cette couleur trouvée. Calibrez la couleur ou augmentez la tolérance.';$('go').disabled=false;return}
+  S.dets=blobs.map((b,i)=>({n:i+1,item:0,conf:0,box:b.box,state:'no',label:'analyse…'}));
+  draw();renderDets();
+  let done=0,fail=0,q=[...S.dets.keys()];
+  async function worker(){
+    while(q.length){
+      const k=q.shift(),d=S.dets[k];
+      try{
+        const items=await brickognize(d.box);
+        const m=items.slice(0,5).find(c=>cand.some(i=>baseId(i.part_num)===baseId(c.id)));
+        if(m){const it=cand.find(i=>baseId(i.part_num)===baseId(m.id));d.item=it.idx;d.conf=m.score||0.5;d.state='pend';d.label=null}
+        else{d.label=items[0]?('Hors set ? Brickognize : '+items[0].name+' ('+items[0].id+')'):'Non reconnu'}
+      }catch(e){fail++;d.label='Erreur Brickognize';if(e instanceof TypeError)d.label='Blocage navigateur (CORS) ou réseau'}
+      done++;$('photoStatus').textContent=`Reconnaissance ${done}/${S.dets.length}…`;
+    }
+  }
+  await Promise.all([worker(),worker(),worker()]);
+  const found=S.dets.filter(d=>d.item).length;
+  $('photoStatus').textContent=`${S.dets.length} zone(s) de cette couleur, ${found} correspondent à l’inventaire.`+(fail?`\n${fail} erreur(s) : voir la liste (si « CORS », Brickognize refuse les appels depuis ce site).`:'')+'\nVérifiez à l’œil : les cadres jaunes sont les candidats.';
+  $('hint').hidden=false;$('go').disabled=false;draw();renderDets();renderItems();
+}
+
+/* ---------- affichage ---------- */
+function draw(){
+  const cv=$('cv');if(!S.img)return;
+  cv.width=S.img.width;cv.height=S.img.height;const g=cv.getContext('2d');
+  g.drawImage(S.img,0,0);
+  const act=S.dets.filter(d=>d.state!=='no');
+  if(act.length){
+    g.fillStyle='rgba(0,0,0,.55)';g.fillRect(0,0,cv.width,cv.height);
+    act.forEach(d=>{const[x0,y0,x1,y1]=d.box;g.drawImage(S.img,x0,y0,x1-x0,y1-y0,x0,y0,x1-x0,y1-y0)});
+  }
+  const lw=Math.max(3,cv.width/350),fs=Math.max(16,cv.width/45);
+  g.font=`bold ${fs}px sans-serif`;g.textBaseline='top';
+  act.forEach(d=>{
+    const[x0,y0,x1,y1]=d.box,col=d.state==='ok'?'#1fd45a':'#ffe600';
+    g.strokeStyle=col;g.lineWidth=lw;g.strokeRect(x0,y0,x1-x0,y1-y0);
+    const t=String(d.n),w=g.measureText(t).width+8;
+    g.fillStyle=col;g.fillRect(x0,Math.max(0,y0-fs-4),w,fs+4);
+    g.fillStyle='#000';g.fillText(t,x0+4,Math.max(0,y0-fs-4)+2);
+  });
+}
+function cycle(d){d.state=d.state==='pend'?'ok':d.state==='ok'?'no':'pend'}
+$('cv').onclick=e=>{
+  const cv=$('cv'),r=cv.getBoundingClientRect(),x=(e.clientX-r.left)*cv.width/r.width,y=(e.clientY-r.top)*cv.height/r.height;
+  if(S.calibrating){S.calibrating=false;S.sample=sampleAt(Math.round(x),Math.round(y));$('photoStatus').textContent='Couleur calibrée : rgb('+S.sample.map(Math.round).join(', ')+'). Lancez l’analyse.';return}
+  const hit=S.dets.filter(d=>d.state!=='no'&&x>=d.box[0]&&x<=d.box[2]&&y>=d.box[1]&&y<=d.box[3])
+    .sort((a,b)=>(a.box[2]-a.box[0])*(a.box[3]-a.box[1])-(b.box[2]-b.box[0])*(b.box[3]-b.box[1]))[0];
+  if(hit){cycle(hit);draw();renderDets();renderItems()}
+};
+function renderDets(){
+  const box=$('dets');box.innerHTML='';
+  S.dets.forEach(d=>{
+    const it=d.item?S.items.find(i=>i.idx===d.item):null;
+    const el=document.createElement('div');el.className='det '+(d.state==='ok'?'ok':d.state==='no'&&it?'no':'');
+    const txt=it?`#${it.idx} ${esc(it.name)} <small>(${it.color_name}, confiance ${Math.round(d.conf*100)}%)</small>`:`<small>${esc(d.label||'Pièce non identifiée')}</small>`;
+    el.innerHTML=`<span class="n">${d.n}</span><span class="t">${txt}</span>`;
+    const ok=document.createElement('button');ok.textContent='✓';ok.className='sec';
+    const no=document.createElement('button');no.textContent='✗';no.className='sec';
+    ok.onclick=()=>{d.state='ok';draw();renderDets();renderItems()};
+    no.onclick=()=>{d.state='no';draw();renderDets();renderItems()};
+    el.append(ok,no);box.appendChild(el);
+  });
+}
+</script>
+</body>
+</html>
